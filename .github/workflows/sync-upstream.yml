@@ -16,6 +16,8 @@ jobs:
           fetch-depth: 0
 
       - name: Smart upstream sync
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           
@@ -23,8 +25,18 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
+          # Get upstream repo dynamically from GitHub API
+          UPSTREAM_REPO=$(gh repo view --json parent --jq '.parent.owner.login + "/" + .parent.name')
+          
+          if [ -z "$UPSTREAM_REPO" ] || [ "$UPSTREAM_REPO" = "null/null" ]; then
+            echo "ERROR: This repository is not a fork or upstream info not found"
+            exit 1
+          fi
+          
+          echo "Detected upstream repository: $UPSTREAM_REPO"
+          
           # Add upstream remote
-          UPSTREAM_URL="https://github.com/521xueweihan/GitHub520.git"
+          UPSTREAM_URL="https://github.com/$UPSTREAM_REPO.git"
           git remote add upstream $UPSTREAM_URL || git remote set-url upstream $UPSTREAM_URL
           git fetch upstream --prune
           
