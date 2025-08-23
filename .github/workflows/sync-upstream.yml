@@ -15,4 +15,20 @@ jobs:
         run: |
           git remote add upstream https://github.com/Shabinder/SpotiFlyer.git
           git fetch upstream
-          git push origin --force upstream/main:refs/heads/mainup
+          
+          # Detect the default branch of upstream
+          DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/upstream/HEAD | sed 's@^refs/remotes/upstream/@@')
+          if [ -z "$DEFAULT_BRANCH" ]; then
+            # Fallback: try common branch names
+            if git show-ref --verify --quiet refs/remotes/upstream/main; then
+              DEFAULT_BRANCH="main"
+            elif git show-ref --verify --quiet refs/remotes/upstream/master; then
+              DEFAULT_BRANCH="master"
+            else
+              echo "Could not determine default branch"
+              exit 1
+            fi
+          fi
+          
+          echo "Default branch detected: $DEFAULT_BRANCH"
+          git push origin --force upstream/$DEFAULT_BRANCH:refs/heads/mainup
