@@ -42,18 +42,60 @@ jobs:
           
           echo "=== Checking upstream branches for recent activity ==="
           
-          # Get all upstream branches sorted by last commit date
-          BRANCHES=$(git for-each-ref --sort=-committerdate --format='%(refname:short) %(committerdate:iso8601)' refs/remotes/upstream/)
+          # Get upstream default branch (main or master)
+          DEFAULT_BRANCH=""
+          if git show-ref --verify --quiet refs/remotes/upstream/main; then
+            DEFAULT_BRANCH="main"
+          elif git show-ref --verify --quiet refs/remotes/upstream/master; then
+            DEFAULT_BRANCH="master"
+          fi
           
-          echo "Available upstream branches:"
-          echo "$BRANCHES"
+          echo "Detected default branch: $DEFAULT_BRANCH"
           
-          # Find the most recently updated branch (filter out invalid refs and remove upstream/ prefix)
-          MOST_RECENT_REF=$(echo "$BRANCHES" | grep "upstream/" | head -1 | cut -d' ' -f1)
-          MOST_RECENT_BRANCH=$(echo "$MOST_RECENT_REF" | sed 's/^upstream\///')
-          MOST_RECENT_DATE=$(echo "$BRANCHES" | grep "upstream/" | head -1 | cut -d' ' -f2-)
+          # Check if default branch has commits in the last 6 months
+          SELECTED_BRANCH=""
+          SELECTION_REASON=""
           
-          echo "Most recent upstream branch: $MOST_RECENT_BRANCH (updated: $MOST_RECENT_DATE)"
+          if [ -n "$DEFAULT_BRANCH" ]; then
+            RECENT_DEFAULT_COMMITS=$(git rev-list --count --since="6 months ago" upstream/$DEFAULT_BRANCH)
+            echo "Default branch ($DEFAULT_BRANCH) commits in last 6 months: $RECENT_DEFAULT_COMMITS"
+            
+            if [ "$RECENT_DEFAULT_COMMITS" -gt 0 ]; then
+              SELECTED_BRANCH="$DEFAULT_BRANCH"
+              SELECTION_REASON="Default branch has recent activity"
+              echo "鉁?Using default branch $DEFAULT_BRANCH (has $RECENT_DEFAULT_COMMITS commits in last 6 months)"
+            else
+              echo "脳 Default branch $DEFAULT_BRANCH has no commits in last 6 months, checking other branches..."
+            fi
+          else
+            echo "脳 No standard default branch (main/master) found, checking all branches..."
+          fi
+          
+          # If default branch is not active, find the most recently updated branch
+          if [ -z "$SELECTED_BRANCH" ]; then
+            echo "Scanning all branches for most recent activity..."
+            
+            # Get all upstream branches sorted by last commit date
+            BRANCHES=$(git for-each-ref --sort=-committerdate --format='%(refname:short) %(committerdate:iso8601)' refs/remotes/upstream/)
+            
+            echo "Available upstream branches:"
+            echo "$BRANCHES"
+            
+            # Find the most recently updated branch
+            MOST_RECENT_REF=$(echo "$BRANCHES" | grep "upstream/" | head -1 | cut -d' ' -f1)
+            MOST_RECENT_BRANCH=$(echo "$MOST_RECENT_REF" | sed 's/^upstream\///')
+            MOST_RECENT_DATE=$(echo "$BRANCHES" | grep "upstream/" | head -1 | cut -d' ' -f2-)
+            
+            SELECTED_BRANCH="$MOST_RECENT_BRANCH"
+            SELECTION_REASON="Most recently updated branch"
+            echo "鉁?Using most active branch: $MOST_RECENT_BRANCH (updated: $MOST_RECENT_DATE)"
+          fi
+          
+          echo ""
+          echo "=== BRANCH SELECTION SUMMARY ==="
+          echo "Selected branch: $SELECTED_BRANCH"
+          echo "Selection reason: $SELECTION_REASON"
+          echo "================================="
           
           # Get current mainup branch head (if exists)
           CURRENT_MAINUP_SHA=""
@@ -65,26 +107,26 @@ jobs:
           fi
           
           # Get upstream branch SHA
-          UPSTREAM_SHA=$(git rev-parse upstream/$MOST_RECENT_BRANCH)
-          echo "Upstream $MOST_RECENT_BRANCH SHA: $UPSTREAM_SHA"
+          UPSTREAM_SHA=$(git rev-parse upstream/$SELECTED_BRANCH)
+          echo "Upstream $SELECTED_BRANCH SHA: $UPSTREAM_SHA"
           
           # Check if sync is needed
           if [ "$CURRENT_MAINUP_SHA" = "$UPSTREAM_SHA" ]; then
-            echo "SUCCESS: No sync needed - mainup is already up to date with upstream/$MOST_RECENT_BRANCH"
+            echo "SUCCESS: No sync needed - mainup is already up to date with upstream/$SELECTED_BRANCH"
             echo "SYNC_NEEDED=false" >> $GITHUB_OUTPUT
             exit 0
           fi
           
           # Check if there are new commits in the last 7 days
-          RECENT_COMMITS=$(git rev-list --count --since="7 days ago" upstream/$MOST_RECENT_BRANCH)
+          RECENT_COMMITS=$(git rev-list --count --since="7 days ago" upstream/$SELECTED_BRANCH)
           echo "Recent commits (last 7 days): $RECENT_COMMITS"
           
           if [ "$RECENT_COMMITS" -eq 0 ] && [ -n "$CURRENT_MAINUP_SHA" ]; then
-            echo "鈩癸笍  No recent activity in upstream/$MOST_RECENT_BRANCH, checking if mainup is reasonable"
+            echo "鈩癸笍  No recent activity in upstream/$SELECTED_BRANCH, checking if mainup is reasonable"
             
             # Check if mainup is behind by more than 10 commits
-            if git merge-base --is-ancestor $CURRENT_MAINUP_SHA upstream/$MOST_RECENT_BRANCH; then
-              BEHIND_COUNT=$(git rev-list --count $CURRENT_MAINUP_SHA..upstream/$MOST_RECENT_BRANCH)
+            if git merge-base --is-ancestor $CURRENT_MAINUP_SHA upstream/$SELECTED_BRANCH; then
+              BEHIND_COUNT=$(git rev-list --count $CURRENT_MAINUP_SHA..upstream/$SELECTED_BRANCH)
               if [ "$BEHIND_COUNT" -lt 10 ]; then
                 echo "SUCCESS: Skip sync - mainup is only $BEHIND_COUNT commits behind and no recent upstream activity"
                 echo "SYNC_NEEDED=false" >> $GITHUB_OUTPUT
@@ -93,22 +135,22 @@ jobs:
             fi
           fi
           
-          echo "SYNC: Sync needed - updating mainup to upstream/$MOST_RECENT_BRANCH"
+          echo "SYNC: Sync needed - updating mainup to upstream/$SELECTED_BRANCH"
           echo "SYNC_NEEDED=true" >> $GITHUB_OUTPUT
-          echo "SYNCED_BRANCH=$MOST_RECENT_BRANCH" >> $GITHUB_OUTPUT
+          echo "SYNCED_BRANCH=$SELECTED_BRANCH" >> $GITHUB_OUTPUT
           
           # Create or update mainup branch
           git checkout -B mainup
-          git reset --hard upstream/$MOST_RECENT_BRANCH
+          git reset --hard upstream/$SELECTED_BRANCH
           
           # Push the updated branch
           git push origin mainup --force
           
-          echo "SUCCESS: Successfully synced mainup with upstream/$MOST_RECENT_BRANCH"
+          echo "SUCCESS: Successfully synced mainup with upstream/$SELECTED_BRANCH"
           
           # Show sync summary
           echo "=== Sync Summary ==="
-          echo "Synced from: upstream/$MOST_RECENT_BRANCH"
+          echo "Synced from: upstream/$SELECTED_BRANCH"
           echo "New HEAD: $(git rev-parse HEAD)"
           echo "Commits synced: $(git rev-list --count $CURRENT_MAINUP_SHA..HEAD 2>/dev/null || echo 'N/A (new branch)')"
 
